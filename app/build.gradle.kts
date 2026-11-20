@@ -34,8 +34,8 @@ android {
         applicationId = "br.com.begood.studio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {
@@ -99,4 +99,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3")
 
     testImplementation("junit:junit:4.13.2")
+
+    // QR Code do Pix (cafezinho)
+    implementation("com.google.zxing:core:3.5.3")
 }

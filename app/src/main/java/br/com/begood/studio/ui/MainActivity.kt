@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AvTimer
+import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Icon
@@ -23,6 +24,10 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import br.com.begood.studio.afinador.TelaAfinador
 import br.com.begood.studio.metronomo.TelaMetronomo
@@ -43,6 +48,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = CoresEscuras) {
+                var cafezinho by rememberSaveable { mutableStateOf(false) }
+                if (cafezinho) DialogoCafezinho { cafezinho = false }
                 Scaffold(
                     containerColor = Fundo,
                     bottomBar = {
@@ -63,6 +70,13 @@ class MainActivity : ComponentActivity() {
                                     ),
                                 )
                             }
+                            // Não é uma aba: abre a janela do Pix por cima da tela atual.
+                            NavigationBarItem(
+                                selected = false,
+                                onClick = { cafezinho = true },
+                                icon = { Icon(Icons.Filled.Coffee, null) },
+                                label = { Text("Cafezinho") },
+                            )
                         }
                     },
                 ) { espaco ->
