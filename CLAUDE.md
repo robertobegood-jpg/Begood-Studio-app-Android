@@ -2,6 +2,7 @@
 
 App para músicos, com o mesmo visual (âmbar sobre fundo escuro) do Begood Music Player (`D:\Projetos iA\Begood Music`).
 Três abas na barra de baixo: **Afinador · Metrônomo · Player**. Detalhes de uso e técnicos: `README.md`.
+Repositório: github.com/robertobegood-jpg/Begood-Studio-app-Android (privado)
 
 ## Funções
 - Afinador cromático (MPM/NSDF com FFT + refinamento em múltiplos do período; janela longa para graves).
