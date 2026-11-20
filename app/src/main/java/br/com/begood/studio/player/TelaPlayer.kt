@@ -100,7 +100,7 @@ fun TelaPlayer(vm: AppViewModel) {
             )
             IconButton(onClick = abrirArquivo) { Icon(Icons.Filled.FolderOpen, "Abrir outra música", tint = Ambar) }
         }
-        p.erro?.let { Text(it, color = Color(0xFFE5643A)) }
+        p.erro?.let { Text(it, color = Color(0xFFE5643A), style = MaterialTheme.typography.bodySmall) }
 
         Onda(p)
         Row {
@@ -124,7 +124,11 @@ fun TelaPlayer(vm: AppViewModel) {
                 Icon(Icons.Filled.Repeat, "Repetir A–B", Modifier.size(32.dp), tint = if (p.repetir) Ambar else Cinza)
             }
         }
-        if (p.esperando) Text("Pausa antes de repetir…", color = AmbarClaro, modifier = Modifier.align(Alignment.CenterHorizontally))
+        // Espaço sempre reservado: a tela não "pula" quando o aviso aparece
+        Box(Modifier.fillMaxWidth().height(28.dp), contentAlignment = Alignment.Center) {
+            if (p.esperando) Text("Recomeça em ${p.faltaEspera}…", color = AmbarClaro, style = MaterialTheme.typography.titleMedium)
+            else if (p.repetir && p.pontoB != null) Text("Repetindo o trecho A–B", color = Cinza, style = MaterialTheme.typography.bodyMedium)
+        }
 
         SecaoAB(vm)
         SecaoVelocidade(vm)
@@ -338,7 +342,7 @@ private fun SecaoTom(vm: AppViewModel) {
     Secao("Tom (sem mudar a velocidade)") {
         val nomeTom = when (p.semitons) {
             0 -> "original"
-            else -> "%+d semitom%s".format(p.semitons, if (kotlin.math.abs(p.semitons) > 1) "s" else "")
+            else -> "%+d %s".format(p.semitons, if (kotlin.math.abs(p.semitons) > 1) "semitons" else "semitom")
         }
         Contador(nomeTom, { p.mudarSemitons(p.semitons - 1) }, { p.mudarSemitons(p.semitons + 1) })
         Row(verticalAlignment = Alignment.CenterVertically) {

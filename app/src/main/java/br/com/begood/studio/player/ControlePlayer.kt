@@ -50,7 +50,6 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
                 // Busca exata em MP3 de taxa variável: o A/B volta no ponto certo.
                 DefaultExtractorsFactory()
                     .setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
-                    .setConstantBitrateSeekingEnabled(true)
             )
         )
         .setAudioAttributes(
@@ -86,6 +85,9 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
     var passoAcelerar by mutableIntStateOf(prefs.getInt("passoAcelerar", 5)) // % por repetição
     var alvoAcelerar by mutableIntStateOf(prefs.getInt("alvoAcelerar", 100)) // %
     var esperando by mutableStateOf(false); private set
+    /** Segundos que faltam para recomeçar a volta (durante a pausa entre voltas). */
+    var faltaEspera by mutableIntStateOf(0); private set
+    private var fimEspera = 0L
 
     val trechos = mutableStateListOf<Trecho>()
     val recentes = mutableStateListOf<Recente>()
@@ -100,16 +102,19 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { tocando = isPlaying }
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY) duracao = player.duration.coerceAtLeast(0)
+                if (state == Player.STATE_READY) atualizarDuracao()
                 if (state == Player.STATE_ENDED) tocando = false
             }
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                erro = "Não deu para tocar este arquivo (${error.errorCodeName})."
-            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) = recuperar(error)
         })
         escopo.launch {
             while (isActive) {
                 posicao = player.currentPosition
+                if (duracao <= 0 || player.duration > 0) atualizarDuracao()
+                // Rede de segurança: em alguns MP3 (taxa variável) o aviso do B pode não chegar.
+                val b = pontoB
+                if (repetir && b != null && !esperando && player.isPlaying && posicao in (b + 30)..(b + 2000)) chegouNoB()
+                faltaEspera = if (esperando) ((fimEspera - android.os.SystemClock.elapsedRealtime() + 999) / 1000).toInt().coerceAtLeast(1) else 0
                 delay(40)
             }
         }
@@ -130,6 +135,11 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
         limparAB()
         repeticoes = 0
         duracao = 0
+        duracaoArquivo = 0
+        escopo.launch {
+            val d = lerDuracao(novo)
+            if (uri == novo) { duracaoArquivo = d; atualizarDuracao() }
+        }
         player.setMediaItem(MediaItem.fromUri(novo))
         player.prepare()
         player.playWhenReady = tocar
@@ -144,6 +154,57 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
         jobOnda = escopo.launch {
             val picos = FormaDeOnda.calcular(ctx, novo)
             if (uri == novo) { onda = picos; calculandoOnda = false }
+        }
+    }
+
+    /**
+     * MP3 de taxa variável: o player só descobre a duração exata no fim da música. Enquanto isso,
+     * usa a duração que o Android lê do arquivo (senão o A/B e a barra ficam em 0:00).
+     */
+    private var duracaoArquivo = 0L
+
+    private fun atualizarDuracao() {
+        val d = player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: duracaoArquivo
+        if (d > 0) duracao = d
+    }
+
+    private suspend fun lerDuracao(u: Uri): Long = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val r = android.media.MediaMetadataRetriever()
+            try {
+                r.setDataSource(ctx, u)
+                r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            } finally { r.release() }
+        }.getOrDefault(0L)
+    }
+
+    private var ultimaRecuperacao = 0L
+    private val apagarAviso = Runnable { if (erro?.startsWith("Deu um erro") == true) erro = null }
+
+    /**
+     * Se o player der erro no meio da música, recomeça sozinho do mesmo ponto (uma vez a cada 5 s,
+     * para não ficar em laço com um arquivo realmente estragado) e mostra o motivo exato.
+     */
+    private fun recuperar(e: androidx.media3.common.PlaybackException) {
+        val causa = generateSequence(e.cause) { it.cause }.lastOrNull() ?: e.cause
+        val detalhe = listOfNotNull(e.errorCodeName, causa?.javaClass?.simpleName, causa?.message?.take(140)).joinToString(" • ")
+        android.util.Log.e("BegoodStudio", "Erro no player: $detalhe", e)
+        val agora = android.os.SystemClock.elapsedRealtime()
+        if (uri != null && agora - ultimaRecuperacao > 5000) {
+            ultimaRecuperacao = agora
+            val pos = player.currentPosition
+            val tocar = player.playWhenReady || esperando
+            cancelarEspera()
+            player.prepare()
+            player.seekTo(pos)
+            player.playWhenReady = tocar
+            aplicarParametros()
+            reprogramar()
+            erro = "Deu um erro ao tocar e o player recomeçou do mesmo ponto. Se repetir, mande este detalhe: $detalhe"
+            handler.removeCallbacks(apagarAviso)
+            handler.postDelayed(apagarAviso, 12000)
+        } else {
+            erro = "Não deu para tocar este arquivo. Detalhe: $detalhe"
         }
     }
 
@@ -240,7 +301,7 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
     private fun chegouNoB() {
         val a = pontoA ?: return
         val b = pontoB ?: return
-        if (!repetir) return
+        if (!repetir || esperando) return
         // O aviso pode chegar duas vezes na mesma passagem; se já voltamos ao A, ignora.
         if (player.currentPosition < b - 150) return
         repeticoes++
@@ -251,6 +312,8 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
             player.pause()
             player.seekTo(a)
             esperando = true
+            fimEspera = android.os.SystemClock.elapsedRealtime() + pausaEntre * 1000L
+            faltaEspera = pausaEntre
             handler.postDelayed(voltarAoA, pausaEntre * 1000L)
         } else {
             player.seekTo(a)
