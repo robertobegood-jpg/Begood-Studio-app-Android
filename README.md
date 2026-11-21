@@ -44,12 +44,30 @@ O Begood Studio junta as três, sem propaganda no meio, e a tela fica acesa enqu
 - Continua tocando ao trocar de aba, então dá para usar junto com o player.
 
 ### 🎸 Player de estudo
-- **Biblioteca** com todas as músicas do celular: busca (sem se preocupar com acentos), recentes, músicas, artistas e pastas.
+- **Biblioteca** com todas as músicas do celular: busca (sem se preocupar com acentos), recentes, músicas,
+  artistas (pelo "artista do álbum") e pastas (a partir de Music, um nível por vez; dá para escolher outro local).
+  Ao voltar de um artista ou pasta, a lista continua onde estava.
   Arquivos de outros lugares (Drive, pendrive) por "Procurar arquivo em outro lugar".
+- **Multipista (instrumentos separados)**: abra uma pasta com as faixas (Voz, Guitarra, Baixo, Bateria, Piano, Outros)
+  e mude o volume de cada uma, **tire** um instrumento para tocar a parte dele ou ouça **só** ele.
+  Velocidade, tom e A/B continuam valendo. Serve para faixas do separador abaixo, do Moises ou de outro programa.
 - **Velocidade** de 25% a 200% **sem mudar o tom**; **tom** ±12 semitons com ajuste fino em cents.
 - **Repetir trecho A/B**: marque no ponto atual, ajuste de 0,1 em 0,1 s ou **arraste o dedo na forma de onda**.
 - Pausa com contagem antes de repetir, **acelerar a cada volta** (ex.: de 60% até 100%) e contador de voltas.
 - **Trechos salvos** por música ("Solo 1", "Riff do refrão"...) e lista das músicas recentes.
+
+### 🎚️ Separar os instrumentos no PC (grátis)
+Na pasta [`ferramentas/separar-instrumentos`](ferramentas/separar-instrumentos) há um separador que usa o
+[Demucs](https://github.com/facebookresearch/demucs) (inteligência artificial que roda no próprio PC, sem internet depois de instalado).
+
+1. Precisa do Python instalado ([python.org](https://www.python.org/downloads/)).
+2. Arraste as músicas para **`Separar instrumentos.bat`** (ou dê dois cliques nele e escolha).
+   Na primeira vez ele instala o separador (cerca de 1 GB). Uma música leva de 1 a 3 minutos num PC comum.
+3. As faixas ficam em `Documentos\Begood Studio\Faixas separadas\<música>`. Copie essa pasta para o celular e,
+   no Studio, abra **Player → Biblioteca → Abrir faixas separadas (multipista)**.
+
+Com 6 faixas sai voz, guitarra, baixo, bateria, piano e outros. Para 4 faixas, um pouco mais limpas
+(voz, baixo, bateria e outros), rode `separar.ps1 -Faixas 4`.
 
 ---
 
@@ -127,9 +145,11 @@ Kotlin + Jetpack Compose, minSdk 26, targetSdk 35. Pacote `br.com.begood.studio`
 - `metronomo/MotorMetronomo.kt`: AudioTrack em baixa latência, cliques posicionados em amostras exatas.
 - `player/ControlePlayer.kt`: Media3 ExoPlayer (`PlaybackParameters` para tempo e tom), busca exata em MP3
   (`FLAG_ENABLE_INDEX_SEEKING`), ponto B por `PlayerMessage`. `FormaDeOnda.kt` decodifica com MediaCodec.
+- `player/Multipista.kt`: junta as faixas num WAV de 2 canais por faixa (cache do app) e o `MixerMultipista`
+  (AudioProcessor antes do Sonic) mistura com o volume de cada uma; assim as faixas nunca saem de sincronia.
 - `ui/Cafezinho.kt`: Pix copia e cola (BR Code) e QR Code com ZXing.
 
-**Compilar e testar:** `./gradlew testDebugUnitTest assembleDebug`. Os testes do afinador (`DetectorTomTest`) conferem a precisão em cents.
+**Compilar e testar:** `./gradlew testDebugUnitTest assembleDebug`. Os testes do afinador (`DetectorTomTest`) conferem a precisão em cents; `MixerMultipistaTest` confere a mistura.
 Sem a chave oficial, o APK sai com a chave de debug: funciona normalmente, mas não atualiza por cima da versão oficial.
 
 **Publicar uma versão** (mantenedor): suba `versionCode` e `versionName` em `app/build.gradle.kts`, faça o commit e crie

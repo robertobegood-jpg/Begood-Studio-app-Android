@@ -41,9 +41,23 @@ data class Recente(val uri: String, val nome: String)
  * Player para estudar: muda o tempo sem mudar o tom (e vice-versa), repete o trecho A–B
  * e pode ir acelerando a cada repetição.
  */
+@OptIn(androidx.media3.common.util.UnstableApi::class)
 class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferences, private val escopo: CoroutineScope) {
 
+    /** Mistura as faixas separadas (modo multipista). Desligado nas músicas normais. */
+    private val mixer = MixerMultipista()
+
     val player: ExoPlayer = ExoPlayer.Builder(ctx)
+        .setRenderersFactory(object : androidx.media3.exoplayer.DefaultRenderersFactory(ctx) {
+            override fun buildAudioSink(
+                context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean,
+            ): androidx.media3.exoplayer.audio.AudioSink =
+                androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(false)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(mixer))
+                    .build()
+        })
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
                 ctx,
@@ -89,6 +103,15 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
     var faltaEspera by mutableIntStateOf(0); private set
     private var fimEspera = 0L
 
+    // Multipista (faixas separadas: voz, guitarra, baixo...)
+    /** Faixas da música aberta, ou null quando é uma música normal. */
+    var faixas by mutableStateOf<List<FaixaMix>?>(null); private set
+    /** Progresso (0..1) enquanto prepara as faixas, ou null. */
+    var montando by mutableStateOf<Float?>(null); private set
+    /** Aviso de problema ao abrir as faixas (mostrado numa janela). */
+    var avisoMultipista by mutableStateOf<String?>(null)
+    private var jobMontar: Job? = null
+
     val trechos = mutableStateListOf<Trecho>()
     val recentes = mutableStateListOf<Recente>()
 
@@ -121,26 +144,96 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
         // Abre a última música estudada (sem tocar)
         prefs.getString("ultima", null)?.let { u ->
             val r = recentes.firstOrNull { it.uri == u }
-            if (r != null) runCatching { abrir(Uri.parse(r.uri), r.nome, tocar = false) }
+            if (r != null) runCatching { abrirRecente(r, tocar = false) }
         }
+    }
+
+    /** Abre uma música da lista de recentes (arquivo normal ou pasta de faixas separadas). */
+    fun abrirRecente(r: Recente, tocar: Boolean = true) {
+        val u = Uri.parse(r.uri)
+        if (android.provider.DocumentsContract.isTreeUri(u)) abrirMultipista(u, tocar) else abrir(u, r.nome, tocar)
     }
 
     fun abrir(novo: Uri, nomeConhecido: String? = null, tocar: Boolean = true) {
         // Mantém a permissão de leitura do arquivo depois de reiniciar o celular
         runCatching { ctx.contentResolver.takePersistableUriPermission(novo, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        jobMontar?.cancel(); montando = null
+        faixas = null
+        mixer.faixas = 0
+        carregar(novo, novo, nomeConhecido ?: nomeDoArquivo(novo), tocar, null)
+    }
+
+    /**
+     * Abre uma pasta com as faixas separadas (Voz, Guitarra, Baixo, Bateria...). Na primeira vez
+     * junta as faixas num arquivo só (leva alguns segundos); depois abre na hora.
+     */
+    fun abrirMultipista(pasta: Uri, tocar: Boolean = true) {
+        runCatching { ctx.contentResolver.takePersistableUriPermission(pasta, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        jobMontar?.cancel()
+        player.pause()
+        montando = 0f
+        jobMontar = escopo.launch {
+            try {
+                var ultimo = -1
+                val m = MontadorMultipista.montar(ctx, pasta) { f ->
+                    val pct = (f * 100).toInt()
+                    if (pct != ultimo) { ultimo = pct; escopo.launch { if (montando != null) montando = f } }
+                }
+                val lista = m.nomes.map { FaixaMix(it) }
+                faixas = lista
+                mixer.faixas = lista.size
+                aplicarMix()
+                montando = null
+                carregar(pasta, Uri.fromFile(m.arquivo), MontadorMultipista.nomeDaPasta(ctx, pasta), tocar, m)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                montando = null
+                avisoMultipista = (e as? MontadorMultipista.Problema)?.message
+                    ?: "Não deu para abrir as faixas (${e.javaClass.simpleName}: ${e.message?.take(120)})."
+            }
+        }
+    }
+
+    // ---------- Volume de cada faixa ----------
+
+    fun mudarVolume(f: FaixaMix, v: Float) { f.volume = v.coerceIn(0f, 1.5f); aplicarMix() }
+    fun alternarMudo(f: FaixaMix) { f.mudo = !f.mudo; if (f.mudo) f.solo = false; aplicarMix() }
+    fun alternarSolo(f: FaixaMix) { f.solo = !f.solo; if (f.solo) f.mudo = false; aplicarMix() }
+    /** Tira só esta faixa (para tocar a parte dela por cima). */
+    fun tirarSo(f: FaixaMix) { faixas?.forEach { it.solo = false; it.mudo = it === f }; aplicarMix() }
+    fun mixNormal() { faixas?.forEach { it.volume = 1f; it.mudo = false; it.solo = false }; aplicarMix() }
+
+    private fun aplicarMix() {
+        val lista = faixas ?: return
+        val temSolo = lista.any { it.solo }
+        mixer.ganhos = FloatArray(lista.size) { i ->
+            val f = lista[i]
+            when {
+                temSolo -> if (f.solo) f.volume else 0f
+                f.mudo -> 0f
+                else -> f.volume
+            }
+        }
+    }
+
+    /** [chave] identifica a música (trechos salvos, recentes); [midia] é o que o player toca. */
+    private fun carregar(chave: Uri, midia: Uri, nomeMusica: String, tocar: Boolean, montagem: MontagemMultipista?) {
+        val novo = chave
         erro = null
         cancelarEspera()
         uri = novo
-        nome = nomeConhecido ?: nomeDoArquivo(novo)
+        nome = nomeMusica
         limparAB()
         repeticoes = 0
         duracao = 0
-        duracaoArquivo = 0
-        escopo.launch {
+        duracaoArquivo = montagem?.duracaoMs ?: 0
+        if (montagem == null) escopo.launch {
             val d = lerDuracao(novo)
             if (uri == novo) { duracaoArquivo = d; atualizarDuracao() }
         }
-        player.setMediaItem(MediaItem.fromUri(novo))
+        atualizarDuracao()
+        player.setMediaItem(MediaItem.fromUri(midia))
         player.prepare()
         player.playWhenReady = tocar
         aplicarParametros()
@@ -150,6 +243,7 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
 
         onda = null
         jobOnda?.cancel()
+        if (montagem != null) { onda = montagem.onda; calculandoOnda = false; return }
         calculandoOnda = true
         jobOnda = escopo.launch {
             val picos = FormaDeOnda.calcular(ctx, novo)

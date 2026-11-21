@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,8 +29,10 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,7 +70,7 @@ import br.com.begood.studio.ui.formatarTempo
  * [fechar] = null quando ainda não há música aberta (a biblioteca é a própria tela do player).
  */
 @Composable
-fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, fechar: (() -> Unit)?) {
+fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, abrirPasta: () -> Unit, fechar: (() -> Unit)?) {
     val ctx = LocalContext.current
     val p = vm.player
     var temPermissao by remember { mutableStateOf(LeitorBiblioteca.temPermissao(ctx)) }
@@ -75,8 +80,11 @@ fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, fechar: (() -> Un
     if (fechar != null) BackHandler { fechar() }
 
     var busca by rememberSaveable { mutableStateOf("") }
-    var grupo by rememberSaveable { mutableStateOf<String?>(null) } // artista ou pasta escolhida
-    if (grupo != null) BackHandler { grupo = null }
+    val grupo = vm.grupoBiblioteca // artista ou pasta escolhida
+    /** Lista que lembra onde estava (cada aba, artista e pasta tem a sua). */
+    val estado: @Composable (String) -> LazyListState = { chave ->
+        remember(chave) { vm.posicoesBiblioteca.getOrPut(chave) { LazyListState() } }
+    }
 
     val escolher = { m: MusicaLocal ->
         p.abrir(m.uri, m.nomeCompleto)
@@ -101,7 +109,7 @@ fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, fechar: (() -> Un
             Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Para mostrar as músicas do celular, o app precisa da permissão de acesso às músicas.")
                 Button(onClick = { pedir.launch(LeitorBiblioteca.permissao) }, modifier = Modifier.fillMaxWidth()) { Text("Permitir acesso às músicas") }
-                BotaoProcurar(abrirArquivo)
+                BotaoProcurar(abrirArquivo, abrirPasta)
                 if (p.recentes.isNotEmpty()) {
                     Text("Estudadas recentemente", color = Ambar)
                     LazyColumn { items(p.recentes.toList(), key = { it.uri }) { r -> LinhaRecente(vm, r) } }
@@ -123,7 +131,7 @@ fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, fechar: (() -> Un
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                 abas.forEachIndexed { i, t ->
                     SegmentedButton(
-                        selected = vm.abaBiblioteca == i, onClick = { vm.mudarAbaBiblioteca(i); grupo = null },
+                        selected = vm.abaBiblioteca == i, onClick = { vm.mudarAbaBiblioteca(i) },
                         shape = SegmentedButtonDefaults.itemShape(i, abas.size), icon = {},
                     ) { Text(t, maxLines = 1, style = MaterialTheme.typography.labelMedium) }
                 }
@@ -135,68 +143,126 @@ fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, fechar: (() -> Un
             return@Column
         }
 
-        val rodape: @Composable () -> Unit = { BotaoProcurar(abrirArquivo) }
+        val rodape: @Composable () -> Unit = { BotaoProcurar(abrirArquivo, abrirPasta) }
         when {
             busca.isNotBlank() -> {
                 val palavras = semAcento(busca).split(' ').filter { it.isNotBlank() }
                 val achadas = todas.filter { m -> palavras.all { m.busca.contains(it) } }
-                ListaMusicas(achadas, p, escolher, vazio = "Nada encontrado para \"$busca\".", rodape = rodape)
+                ListaMusicas(achadas, p, escolher, vazio = "Nada encontrado para \"$busca\".", rodape = rodape, estado = estado("busca"))
             }
-            vm.abaBiblioteca == 0 -> LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            vm.abaBiblioteca == 0 -> LazyColumn(Modifier.fillMaxSize(), state = estado("recentes"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (p.recentes.isEmpty()) item { Text("Nenhuma música estudada ainda.", color = Cinza) }
                 items(p.recentes.toList(), key = { it.uri }) { r -> LinhaRecente(vm, r) }
                 item { rodape() }
             }
-            vm.abaBiblioteca == 1 -> ListaMusicas(todas, p, escolher, vazio = "Nenhuma música encontrada no celular.", rodape = rodape)
-            else -> {
-                val porArtista = vm.abaBiblioteca == 2
-                val chave = { m: MusicaLocal -> if (porArtista) m.artista.ifEmpty { "Artista desconhecido" } else m.pasta }
-                val g = grupo
-                if (g == null) {
-                    val grupos = todas.groupBy(chave).toList().sortedBy { semAcento(it.first) }
-                    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            vm.abaBiblioteca == 1 -> ListaMusicas(todas, p, escolher, vazio = "Nenhuma música encontrada no celular.", rodape = rodape, estado = estado("musicas"))
+            vm.abaBiblioteca == 2 -> {
+                if (grupo != null) BackHandler { vm.grupoBiblioteca = null }
+                if (grupo == null) {
+                    val grupos = todas.groupBy { it.artistaDaAba.ifEmpty { "Artista desconhecido" } }.toList().sortedBy { semAcento(it.first) }
+                    LazyColumn(Modifier.fillMaxSize(), state = estado("artistas"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(grupos, key = { it.first }) { (nome, lista) ->
-                            LinhaGrupo(if (porArtista) Icons.Filled.Person else Icons.Filled.Folder, nome, lista.size) { grupo = nome }
+                            LinhaGrupo(Icons.Filled.Person, nome, lista.size) { vm.grupoBiblioteca = nome }
                         }
                         item { rodape() }
                     }
                 } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { grupo = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Voltar") }
-                        Text(g, style = MaterialTheme.typography.titleMedium, color = AmbarClaro, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    ListaMusicas(todas.filter { chave(it) == g }, p, escolher, vazio = "", rodape = rodape)
+                    Cabecalho(grupo) { vm.grupoBiblioteca = null }
+                    val doArtista = todas.filter { it.artistaDaAba.ifEmpty { "Artista desconhecido" } == grupo }
+                        .sortedWith(compareBy({ semAcento(it.album) }, { semAcento(it.titulo) }))
+                    ListaMusicas(doArtista, p, escolher, vazio = "", rodape = rodape, estado = estado("artista:$grupo"))
                 }
             }
+            else -> AbaPastas(vm, todas, escolher, rodape, estado)
         }
     }
 }
 
 @Composable
-private fun ListaMusicas(lista: List<MusicaLocal>, p: ControlePlayer, escolher: (MusicaLocal) -> Unit, vazio: String, rodape: @Composable () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-        if (lista.isEmpty() && vazio.isNotEmpty()) item { Text(vazio, color = Cinza, modifier = Modifier.padding(vertical = 8.dp)) }
-        items(lista, key = { it.id }) { m ->
-            val atual = p.uri == m.uri
-            Surface(
-                color = if (atual) MaterialTheme.colorScheme.secondaryContainer else Painel,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth().clickable { escolher(m) },
-            ) {
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.MusicNote, null, tint = if (atual) Ambar else Cinza, modifier = Modifier.size(20.dp))
-                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                        Text(m.titulo, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (atual) AmbarClaro else Color.Unspecified)
-                        Text(
-                            listOf(m.artista, m.album).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { m.pasta },
-                            style = MaterialTheme.typography.bodySmall, color = Cinza, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Text(formatarTempo(m.duracaoMs), style = MaterialTheme.typography.bodySmall, color = Cinza, modifier = Modifier.padding(start = 8.dp))
-                }
+private fun Cabecalho(titulo: String, voltar: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = voltar) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Voltar") }
+        Text(titulo, style = MaterialTheme.typography.titleMedium, color = AmbarClaro, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * Aba Pastas: começa na pasta escolhida (Music, por padrão) e mostra um nível por vez,
+ * como um gerenciador de arquivos: subpastas primeiro, depois as músicas que estão ali.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AbaPastas(
+    vm: AppViewModel, todas: List<MusicaLocal>, escolher: (MusicaLocal) -> Unit,
+    rodape: @Composable () -> Unit, estado: @Composable (String) -> LazyListState,
+) {
+    val p = vm.player
+    // Locais possíveis: as pastas de primeiro nível que têm música (Music, Download...) e "Todas"
+    val locais = remember(todas) { todas.map { it.pasta.substringBefore('/') }.distinct().sortedBy { semAcento(it) } }
+    val base = vm.pastaBase.takeIf { it.isEmpty() || it in locais } ?: ""
+    val atual = vm.grupoBiblioteca ?: base
+    val subir = { vm.grupoBiblioteca = atual.substringBeforeLast('/', "").takeIf { it.length > base.length } }
+    if (atual != base) BackHandler { subir() }
+
+    if (locais.size > 1) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+            for (l in listOf("") + locais) {
+                FilterChip(selected = base == l, onClick = { vm.mudarPastaBase(l) }, label = { Text(if (l.isEmpty()) "Todas" else l) })
             }
         }
+    }
+    if (atual != base) Cabecalho(atual.removePrefix(base).trimStart('/')) { subir() }
+    val prefixo = if (atual.isEmpty()) "" else "$atual/"
+    val dentro = todas.filter { atual.isEmpty() || it.pasta == atual || it.pasta.startsWith(prefixo) }
+    val subpastas = dentro.filter { it.pasta != atual }
+        .groupBy { it.pasta.removePrefix(prefixo).substringBefore('/') }
+        .toList().sortedBy { semAcento(it.first) }
+    val aqui = dentro.filter { it.pasta == atual }.sortedWith(compareBy({ semAcento(it.album) }, { semAcento(it.titulo) }))
+
+    LazyColumn(
+        Modifier.fillMaxSize(), state = estado("pasta:$atual"),
+        verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 16.dp),
+    ) {
+        if (subpastas.isEmpty() && aqui.isEmpty()) item { Text("Nenhuma música nesta pasta.", color = Cinza) }
+        items(subpastas, key = { "d:" + it.first }) { (nome, lista) ->
+            LinhaGrupo(Icons.Filled.Folder, nome, lista.size) { vm.grupoBiblioteca = prefixo + nome }
+        }
+        items(aqui, key = { it.id }) { m -> LinhaMusica(m, p, escolher) }
         item { rodape() }
+    }
+}
+
+@Composable
+private fun ListaMusicas(
+    lista: List<MusicaLocal>, p: ControlePlayer, escolher: (MusicaLocal) -> Unit, vazio: String,
+    rodape: @Composable () -> Unit, estado: LazyListState,
+) {
+    LazyColumn(Modifier.fillMaxSize(), state = estado, verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+        if (lista.isEmpty() && vazio.isNotEmpty()) item { Text(vazio, color = Cinza, modifier = Modifier.padding(vertical = 8.dp)) }
+        items(lista, key = { it.id }) { m -> LinhaMusica(m, p, escolher) }
+        item { rodape() }
+    }
+}
+
+@Composable
+private fun LinhaMusica(m: MusicaLocal, p: ControlePlayer, escolher: (MusicaLocal) -> Unit) {
+    val atual = p.uri == m.uri
+    Surface(
+        color = if (atual) MaterialTheme.colorScheme.secondaryContainer else Painel,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth().clickable { escolher(m) },
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.MusicNote, null, tint = if (atual) Ambar else Cinza, modifier = Modifier.size(20.dp))
+            Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Text(m.titulo, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (atual) AmbarClaro else Color.Unspecified)
+                Text(
+                    listOf(m.artista, m.album).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { m.pasta },
+                    style = MaterialTheme.typography.bodySmall, color = Cinza, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(formatarTempo(m.duracaoMs), style = MaterialTheme.typography.bodySmall, color = Cinza, modifier = Modifier.padding(start = 8.dp))
+        }
     }
 }
 
@@ -216,7 +282,7 @@ private fun LinhaRecente(vm: AppViewModel, r: Recente) {
     val p = vm.player
     Surface(
         color = Painel, shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.fillMaxWidth().clickable { p.abrir(Uri.parse(r.uri), r.nome); vm.mostrarBiblioteca = false },
+        modifier = Modifier.fillMaxWidth().clickable { p.abrirRecente(r); vm.mostrarBiblioteca = false },
     ) {
         Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(r.nome, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -227,9 +293,15 @@ private fun LinhaRecente(vm: AppViewModel, r: Recente) {
 
 /** Para arquivos fora da biblioteca (Google Drive, pendrive, downloads de apps...). */
 @Composable
-private fun BotaoProcurar(abrirArquivo: () -> Unit) {
-    OutlinedButton(onClick = abrirArquivo, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Icon(Icons.Filled.FolderOpen, null); Text("  Procurar arquivo em outro lugar")
+private fun BotaoProcurar(abrirArquivo: () -> Unit, abrirPasta: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedButton(onClick = abrirArquivo, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.FolderOpen, null); Text("  Procurar arquivo em outro lugar")
+        }
+        // Pasta com Voz, Guitarra, Baixo, Bateria... (separadas no PC, no Moises etc.)
+        OutlinedButton(onClick = abrirPasta, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Tune, null); Text("  Abrir faixas separadas (multipista)")
+        }
     }
 }
 

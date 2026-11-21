@@ -10,6 +10,9 @@ Repositório: github.com/robertobegood-jpg/Begood-Studio-app-Android (público)
 - Metrônomo gerado amostra por amostra (AudioTrack): compassos, subdivisões, tap tempo, treino de velocidade, compassos mudos.
 - Player (Media3): velocidade 25–200% sem mudar o tom, tom ±12 semitons + cents, repeat A/B exato (PlayerMessage),
   forma de onda, pausa entre voltas, acelerar a cada volta, trechos salvos por música.
+- Biblioteca (MediaStore): artistas pelo artista do álbum, pastas por nível a partir de Music, lembra a posição das listas.
+- Multipista: pasta com faixas separadas → WAV intercalado no cache + `MixerMultipista` (volume, tirar, só).
+- `ferramentas/separar-instrumentos`: separador Demucs para o PC (venv em %LOCALAPPDATA%\BegoodStudio\separador).
 
 ## Como trabalhar comigo
 - Responda e escreva tudo em **português do Brasil**, linguagem simples.

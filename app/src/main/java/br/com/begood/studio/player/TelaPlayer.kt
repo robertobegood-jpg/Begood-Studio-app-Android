@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Replay5
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -42,6 +43,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -63,6 +65,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -83,9 +87,39 @@ fun TelaPlayer(vm: AppViewModel) {
         if (u != null) { p.abrir(u); vm.mostrarBiblioteca = false }
     }
     val abrirArquivo = { escolher.launch(arrayOf("audio/*")) }
+    val escolherPasta = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { u: Uri? ->
+        if (u != null) { p.abrirMultipista(u); vm.mostrarBiblioteca = false }
+    }
+    val abrirPasta = { escolherPasta.launch(null) }
+
+    p.avisoMultipista?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { p.avisoMultipista = null },
+            title = { Text("Faixas separadas") },
+            text = { Text(msg) },
+            confirmButton = { TextButton(onClick = { p.avisoMultipista = null }) { Text("OK") } },
+        )
+    }
+
+    p.montando?.let { f ->
+        Column(
+            Modifier.fillMaxSize().padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Preparando as faixas…", style = MaterialTheme.typography.titleMedium, color = Ambar)
+            LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth())
+            Text("${(f * 100).roundToInt()}%", color = AmbarClaro)
+            Text(
+                "Só na primeira vez: as faixas são juntadas para tocarem exatamente juntas. Depois abre na hora.",
+                style = MaterialTheme.typography.bodySmall, color = Cinza,
+            )
+        }
+        return
+    }
 
     if (p.uri == null || vm.mostrarBiblioteca) {
-        TelaBiblioteca(vm, abrirArquivo, fechar = if (p.uri == null) null else ({ vm.mostrarBiblioteca = false }))
+        TelaBiblioteca(vm, abrirArquivo, abrirPasta, fechar = if (p.uri == null) null else ({ vm.mostrarBiblioteca = false }))
         return
     }
 
@@ -94,7 +128,7 @@ fun TelaPlayer(vm: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.MusicNote, null, tint = Ambar)
+            Icon(if (p.faixas != null) Icons.Filled.Tune else Icons.Filled.MusicNote, null, tint = Ambar)
             Text(
                 p.nome, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
@@ -131,6 +165,7 @@ fun TelaPlayer(vm: AppViewModel) {
             else if (p.repetir && p.pontoB != null) Text("Repetindo o trecho A–B", color = Cinza, style = MaterialTheme.typography.bodyMedium)
         }
 
+        p.faixas?.let { SecaoInstrumentos(p, it) }
         SecaoAB(vm)
         SecaoVelocidade(vm)
         SecaoTom(vm)
@@ -282,6 +317,52 @@ private fun PontoAB(rotulo: String, ms: Long?, marcar: () -> Unit, ajustar: (Lon
         Text(ms?.let { formatarTempo(it, true) } ?: "—", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         OutlinedButton(onClick = { ajustar(-100) }, enabled = ms != null) { Text("−0,1") }
         OutlinedButton(onClick = { ajustar(100) }, enabled = ms != null) { Text("+0,1") }
+    }
+}
+
+/** Modo multipista: volume de cada instrumento, tirar um (para tocar por cima) ou ouvir só um. */
+@Composable
+private fun SecaoInstrumentos(p: ControlePlayer, faixas: List<FaixaMix>) {
+    Secao("Instrumentos") {
+        val temSolo = faixas.any { it.solo }
+        for (f in faixas) {
+            val ouvindo = if (temSolo) f.solo else !f.mudo
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    f.nome, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(76.dp),
+                    color = if (ouvindo) Color.Unspecified else Cinza, fontWeight = FontWeight.Medium,
+                )
+                Slider(
+                    value = f.volume, onValueChange = { p.mudarVolume(f, Math.round(it * 20) / 20f) },
+                    valueRange = 0f..1.5f, modifier = Modifier.weight(1f), enabled = ouvindo,
+                )
+                BotaoFaixa("Tirar", f.mudo, "Tirar ${f.nome}") { p.alternarMudo(f) }
+                BotaoFaixa("Só", f.solo, "Ouvir só ${f.nome}") { p.alternarSolo(f) }
+            }
+        }
+        Text(
+            "Tirar: some com o instrumento para você tocar a parte dele. Só: ouve apenas ele (dá para marcar vários).",
+            style = MaterialTheme.typography.bodySmall, color = Cinza,
+        )
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+            TextButton(
+                onClick = { p.mixNormal() },
+                enabled = faixas.any { it.mudo || it.solo || it.volume != 1f },
+            ) { Text("Voltar todos ao normal") }
+        }
+    }
+}
+
+@Composable
+private fun BotaoFaixa(texto: String, ligado: Boolean, descricao: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(6.dp),
+        color = if (ligado) Ambar else MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = if (ligado) MaterialTheme.colorScheme.onPrimary else Color.Unspecified,
+        modifier = Modifier.height(32.dp).width(46.dp).semantics { contentDescription = descricao },
+    ) {
+        Box(contentAlignment = Alignment.Center) { Text(texto, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
     }
 }
 

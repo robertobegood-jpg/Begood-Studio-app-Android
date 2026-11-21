@@ -107,7 +107,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var abaBiblioteca by mutableIntStateOf(prefs.getInt("abaBiblioteca", 1))
         private set
 
-    fun mudarAbaBiblioteca(n: Int) { abaBiblioteca = n; prefs.edit().putInt("abaBiblioteca", n).apply() }
+    fun mudarAbaBiblioteca(n: Int) { abaBiblioteca = n; grupoBiblioteca = null; prefs.edit().putInt("abaBiblioteca", n).apply() }
+
+    /** Artista ou pasta aberta na biblioteca (fica guardada ao abrir uma música e voltar). */
+    var grupoBiblioteca by mutableStateOf<String?>(null)
+    /** Pasta de onde começa a aba Pastas ("" = todas as pastas do celular). */
+    var pastaBase by mutableStateOf(prefs.getString("pastaBase", "Music") ?: "Music"); private set
+    fun mudarPastaBase(p: String) { pastaBase = p; grupoBiblioteca = null; prefs.edit().putString("pastaBase", p).apply() }
+    /** Posição de cada lista da biblioteca: ao voltar de um artista/pasta, continua onde estava. */
+    val posicoesBiblioteca = HashMap<String, androidx.compose.foundation.lazy.LazyListState>()
 
     fun carregarMusicas() {
         if (carregandoMusicas) return
