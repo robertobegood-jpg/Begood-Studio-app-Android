@@ -44,7 +44,8 @@ O Begood Studio junta as três, sem propaganda no meio, e a tela fica acesa enqu
 - Continua tocando ao trocar de aba, então dá para usar junto com o player.
 
 ### 🎸 Player de estudo
-- Abra qualquer música do celular (MP3, M4A, FLAC, WAV, OGG...).
+- **Biblioteca** com todas as músicas do celular: busca (sem se preocupar com acentos), recentes, músicas, artistas e pastas.
+  Arquivos de outros lugares (Drive, pendrive) por "Procurar arquivo em outro lugar".
 - **Velocidade** de 25% a 200% **sem mudar o tom**; **tom** ±12 semitons com ajuste fino em cents.
 - **Repetir trecho A/B**: marque no ponto atual, ajuste de 0,1 em 0,1 s ou **arraste o dedo na forma de onda**.
 - Pausa com contagem antes de repetir, **acelerar a cada volta** (ex.: de 60% até 100%) e contador de voltas.

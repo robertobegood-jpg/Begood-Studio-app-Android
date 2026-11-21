@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
@@ -79,12 +80,12 @@ import kotlin.math.roundToInt
 fun TelaPlayer(vm: AppViewModel) {
     val p = vm.player
     val escolher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u: Uri? ->
-        if (u != null) p.abrir(u)
+        if (u != null) { p.abrir(u); vm.mostrarBiblioteca = false }
     }
     val abrirArquivo = { escolher.launch(arrayOf("audio/*")) }
 
-    if (p.uri == null) {
-        SemMusica(vm, abrirArquivo)
+    if (p.uri == null || vm.mostrarBiblioteca) {
+        TelaBiblioteca(vm, abrirArquivo, fechar = if (p.uri == null) null else ({ vm.mostrarBiblioteca = false }))
         return
     }
 
@@ -98,7 +99,7 @@ fun TelaPlayer(vm: AppViewModel) {
                 p.nome, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
             )
-            IconButton(onClick = abrirArquivo) { Icon(Icons.Filled.FolderOpen, "Abrir outra música", tint = Ambar) }
+            IconButton(onClick = { vm.mostrarBiblioteca = true }) { Icon(Icons.Filled.LibraryMusic, "Biblioteca: abrir outra música", tint = Ambar) }
         }
         p.erro?.let { Text(it, color = Color(0xFFE5643A), style = MaterialTheme.typography.bodySmall) }
 
@@ -133,43 +134,6 @@ fun TelaPlayer(vm: AppViewModel) {
         SecaoAB(vm)
         SecaoVelocidade(vm)
         SecaoTom(vm)
-    }
-}
-
-@Composable
-private fun SemMusica(vm: AppViewModel, abrir: () -> Unit) {
-    val p = vm.player
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(Icons.Filled.MusicNote, null, tint = Ambar, modifier = Modifier.size(72.dp).padding(top = 24.dp))
-        Text("Abra uma música para estudar", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "Diminua a velocidade sem mudar o tom, mude o tom sem mudar a velocidade e repita o trecho do solo quantas vezes quiser.",
-            color = Cinza, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        )
-        Button(onClick = abrir, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Icon(Icons.Filled.FolderOpen, null); Text("  Abrir música do celular")
-        }
-        if (p.recentes.isNotEmpty()) {
-            Text("Estudadas recentemente", color = Ambar, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-            ListaRecentes(vm)
-        }
-    }
-}
-
-@Composable
-private fun ListaRecentes(vm: AppViewModel) {
-    val p = vm.player
-    for (r in p.recentes.toList()) {
-        Surface(color = Painel, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().clickable { p.abrir(Uri.parse(r.uri), r.nome) }) {
-            Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(r.nome, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                IconButton(onClick = { p.esquecerRecente(r) }) { Icon(Icons.Filled.Close, "Tirar da lista", tint = Cinza) }
-            }
-        }
     }
 }
 

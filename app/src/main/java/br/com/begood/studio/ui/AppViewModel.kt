@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import br.com.begood.studio.afinador.AFINACOES
 import br.com.begood.studio.afinador.MotorAfinador
 import br.com.begood.studio.metronomo.MotorMetronomo
@@ -96,6 +97,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Player ----------
     val player = ControlePlayer(app, prefs, viewModelScope)
+
+    // ---------- Biblioteca (músicas do celular) ----------
+    var musicas by mutableStateOf<List<br.com.begood.studio.player.MusicaLocal>?>(null); private set
+    var carregandoMusicas by mutableStateOf(false); private set
+    /** Biblioteca aberta por cima do player (com uma música já carregada). */
+    var mostrarBiblioteca by mutableStateOf(false)
+    /** Aba da biblioteca: 0 recentes, 1 músicas, 2 artistas, 3 pastas. */
+    var abaBiblioteca by mutableIntStateOf(prefs.getInt("abaBiblioteca", 1))
+        private set
+
+    fun mudarAbaBiblioteca(n: Int) { abaBiblioteca = n; prefs.edit().putInt("abaBiblioteca", n).apply() }
+
+    fun carregarMusicas() {
+        if (carregandoMusicas) return
+        carregandoMusicas = true
+        viewModelScope.launch {
+            musicas = br.com.begood.studio.player.LeitorBiblioteca.ler(getApplication())
+            carregandoMusicas = false
+        }
+    }
 
     init { mudarFiltro(filtroRuido) }
 
