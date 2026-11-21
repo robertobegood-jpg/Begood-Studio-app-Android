@@ -151,6 +151,18 @@ fun TelaBiblioteca(vm: AppViewModel, abrirArquivo: () -> Unit, abrirPasta: () ->
                 ListaMusicas(achadas, p, escolher, vazio = "Nada encontrado para \"$busca\".", rodape = rodape, estado = estado("busca"))
             }
             vm.abaBiblioteca == 0 -> LazyColumn(Modifier.fillMaxSize(), state = estado("recentes"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Músicas com os instrumentos separados pelo app
+                val separadas = br.com.begood.studio.separador.MotorSeparador.pastaFaixas(ctx).listFiles()
+                    ?.filter { it.isDirectory && !it.name.endsWith(".tmp") }?.sortedBy { semAcento(it.name) }.orEmpty()
+                if (separadas.isNotEmpty()) {
+                    item { Text("Instrumentos separados", color = Ambar, style = MaterialTheme.typography.bodyMedium) }
+                    items(separadas, key = { "sep:" + it.name }) { d ->
+                        LinhaGrupo(Icons.Filled.Tune, d.name, d.listFiles()?.size ?: 0) {
+                            p.abrirMultipista(Uri.fromFile(d)); vm.mostrarBiblioteca = false
+                        }
+                    }
+                    item { Text("Estudadas recentemente", color = Ambar, style = MaterialTheme.typography.bodyMedium) }
+                }
                 if (p.recentes.isEmpty()) item { Text("Nenhuma música estudada ainda.", color = Cinza) }
                 items(p.recentes.toList(), key = { it.uri }) { r -> LinhaRecente(vm, r) }
                 item { rodape() }

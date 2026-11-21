@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>Afinador, metrônomo e player de estudo</b> num app só. Android, gratuito, sem anúncios e de código aberto:<br>
-  afinação com precisão de centésimos de cent, metrônomo com treino de velocidade e player para tirar solos em câmera lenta.
+  afinação com precisão de centésimos de cent, metrônomo com treino de velocidade, player para tirar solos em câmera lenta<br>
+  e <b>separação dos instrumentos feita no próprio celular</b>.
 </p>
 
 <p align="center">
@@ -50,13 +51,22 @@ O Begood Studio junta as três, sem propaganda no meio, e a tela fica acesa enqu
   Arquivos de outros lugares (Drive, pendrive) por "Procurar arquivo em outro lugar".
 - **Multipista (instrumentos separados)**: abra uma pasta com as faixas (Voz, Guitarra, Baixo, Bateria, Piano, Outros)
   e mude o volume de cada uma, **tire** um instrumento para tocar a parte dele ou ouça **só** ele.
-  Velocidade, tom e A/B continuam valendo. Serve para faixas do separador abaixo, do Moises ou de outro programa.
+  Velocidade, tom e A/B continuam valendo. Serve para faixas separadas pelo app, pelo separador do PC, pelo Moises ou outro programa.
+- **Separar os instrumentos no celular**: abra uma música e toque em **Separar os instrumentos**. Tudo acontece no próprio
+  celular, sem internet, com o [Demucs](https://github.com/facebookresearch/demucs) (HTDemucs 6 faixas):
+  voz, guitarra, baixo, bateria, piano e outros. Leva alguns minutos por música (depende do celular), roda em segundo plano
+  com aviso de progresso e, quando termina, a música já abre separada. Usa cerca de 1,5 GB de memória enquanto trabalha e
+  uns 45 MB de espaço por música (dá para apagar as faixas depois). Recomendado celular com 4 GB de RAM ou mais.
+- **Exportar áudio** para mandar para a banda ou tocar no show: salva do jeito que você deixou (sem um instrumento,
+  mais lento, em outro tom, só o trecho A–B) em `.m4a` na pasta **Música › Begood Studio**, com botão para compartilhar.
+- **Exportar as faixas para DAW**: cada instrumento num arquivo **WAV** sem perda, numerado e alinhado
+  (Reaper, Studio One, Audacity, FL Studio...). É só arrastar todos para o projeto.
 - **Velocidade** de 25% a 200% **sem mudar o tom**; **tom** ±12 semitons com ajuste fino em cents.
 - **Repetir trecho A/B**: marque no ponto atual, ajuste de 0,1 em 0,1 s ou **arraste o dedo na forma de onda**.
 - Pausa com contagem antes de repetir, **acelerar a cada volta** (ex.: de 60% até 100%) e contador de voltas.
 - **Trechos salvos** por música ("Solo 1", "Riff do refrão"...) e lista das músicas recentes.
 
-### 🎚️ Separar os instrumentos no PC (grátis)
+### 🎚️ Separar os instrumentos no PC (opcional, mais rápido)
 Na pasta [`ferramentas/separar-instrumentos`](ferramentas/separar-instrumentos) há um separador que usa o
 [Demucs](https://github.com/facebookresearch/demucs) (inteligência artificial que roda no próprio PC, sem internet depois de instalado).
 
@@ -107,6 +117,7 @@ Baixe o APK da versão nova e instale **por cima**. Os ajustes e os trechos salv
 ## Privacidade
 
 - **Sem cadastro, sem anúncios e sem internet:** o app não tem permissão de internet, nada sai do celular.
+  Até a separação dos instrumentos é feita no próprio aparelho.
 - O som do microfone é analisado na hora, só para o afinador, e **nunca é gravado**.
 - As músicas abertas no player são lidas do próprio celular.
 
@@ -115,6 +126,8 @@ Baixe o APK da versão nova e instale **por cima**. Os ajustes e os trechos salv
 |---|---|
 | Microfone | Ouvir o instrumento no afinador |
 | Vibração | Vibrar no tempo do metrônomo (opcional) |
+| Notificações | Mostrar o progresso da separação dos instrumentos (opcional) |
+| Serviço em primeiro plano e manter acordado | Continuar separando com a tela apagada ou em outro app |
 
 ---
 
@@ -147,9 +160,14 @@ Kotlin + Jetpack Compose, minSdk 26, targetSdk 35. Pacote `br.com.begood.studio`
   (`FLAG_ENABLE_INDEX_SEEKING`), ponto B por `PlayerMessage`. `FormaDeOnda.kt` decodifica com MediaCodec.
 - `player/Multipista.kt`: junta as faixas num WAV de 2 canais por faixa (cache do app) e o `MixerMultipista`
   (AudioProcessor antes do Sonic) mistura com o volume de cada uma; assim as faixas nunca saem de sincronia.
+- `separador/`: HTDemucs 6s exportado para ONNX (só o núcleo; STFT/iSTFT em Kotlin em `Espectro.kt`, igual ao Demucs),
+  atenção calculada em blocos para caber na memória do celular. Pesos guardados em fp16 no APK e convertidos para fp32
+  no primeiro uso. `MotorSeparador.kt` faz trechos de 7,8 s com sobreposição de 25% (como o `apply_model`),
+  `ServicoSeparacao.kt` roda em primeiro plano e `CodificadorAac.kt` grava as faixas em .m4a.
+- `player/Exportador.kt`: mistura, recorta, aplica velocidade/tom (Sonic do Media3) e salva via MediaStore.
 - `ui/Cafezinho.kt`: Pix copia e cola (BR Code) e QR Code com ZXing.
 
-**Compilar e testar:** `./gradlew testDebugUnitTest assembleDebug`. Os testes do afinador (`DetectorTomTest`) conferem a precisão em cents; `MixerMultipistaTest` confere a mistura.
+**Compilar e testar:** `./gradlew testDebugUnitTest assembleDebug`. Os testes do afinador (`DetectorTomTest`) conferem a precisão em cents; `MixerMultipistaTest` confere a mistura; `EspectroTest` confere a STFT contra o numpy.
 Sem a chave oficial, o APK sai com a chave de debug: funciona normalmente, mas não atualiza por cima da versão oficial.
 
 **Publicar uma versão** (mantenedor): suba `versionCode` e `versionName` em `app/build.gradle.kts`, faça o commit e crie
@@ -160,5 +178,8 @@ Sugestões e correções são bem-vindas por [issues](https://github.com/roberto
 ## Licença
 
 [GPL-3.0](LICENSE): você pode usar, estudar, modificar e redistribuir, desde que as versões derivadas também sejam abertas sob a mesma licença.
+
+O modelo de separação é o [Demucs](https://github.com/facebookresearch/demucs) (HTDemucs), da Meta, sob licença MIT,
+convertido para rodar no celular com o [ONNX Runtime](https://onnxruntime.ai) (MIT).
 
 Desenvolvido por Roberto Santos da Silva.

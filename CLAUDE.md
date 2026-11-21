@@ -12,7 +12,12 @@ Repositório: github.com/robertobegood-jpg/Begood-Studio-app-Android (público)
   forma de onda, pausa entre voltas, acelerar a cada volta, trechos salvos por música.
 - Biblioteca (MediaStore): artistas pelo artista do álbum, pastas por nível a partir de Music, lembra a posição das listas.
 - Multipista: pasta com faixas separadas → WAV intercalado no cache + `MixerMultipista` (volume, tirar, só).
+- Separação no celular (`separador/`): HTDemucs 6s em ONNX Runtime, STFT/iSTFT em Kotlin, serviço em primeiro plano (dataSync),
+  faixas .m4a em `Android/data/.../files/Faixas separadas`. Modelo em `assets/separador` (fp16, ~55 MB).
+  O ORT traz INTERNET no manifesto: está removida com `tools:node="remove"` — mantenha o app sem internet.
+- Exportar (`player/Exportador.kt`): mistura .m4a ou faixas WAV para DAW em Música/Begood Studio.
 - `ferramentas/separar-instrumentos`: separador Demucs para o PC (venv em %LOCALAPPDATA%\BegoodStudio\separador).
+  Cópia para uso do Roberto em `D:\Programas\Begood Separador` (atalho na Área de Trabalho).
 
 ## Como trabalhar comigo
 - Responda e escreva tudo em **português do Brasil**, linguagem simples.

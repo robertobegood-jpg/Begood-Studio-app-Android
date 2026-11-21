@@ -151,7 +151,8 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
     /** Abre uma música da lista de recentes (arquivo normal ou pasta de faixas separadas). */
     fun abrirRecente(r: Recente, tocar: Boolean = true) {
         val u = Uri.parse(r.uri)
-        if (android.provider.DocumentsContract.isTreeUri(u)) abrirMultipista(u, tocar) else abrir(u, r.nome, tocar)
+        if (android.provider.DocumentsContract.isTreeUri(u) || MontadorMultipista.ehPastaDeArquivos(u)) abrirMultipista(u, tocar)
+        else abrir(u, r.nome, tocar)
     }
 
     fun abrir(novo: Uri, nomeConhecido: String? = null, tocar: Boolean = true) {
@@ -195,6 +196,122 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
         }
     }
 
+    /** As faixas abertas foram separadas pelo próprio app (dá para apagar e liberar espaço). */
+    val faixasDoApp: java.io.File?
+        get() = uri?.takeIf { it.scheme == "file" && faixas != null }?.path?.let { java.io.File(it) }
+            ?.takeIf { it.parentFile == br.com.begood.studio.separador.MotorSeparador.pastaFaixas(ctx) }
+
+    /** Apaga as faixas separadas pelo app e fecha a música. */
+    fun apagarFaixasDoApp() {
+        val dir = faixasDoApp ?: return
+        player.stop(); player.clearMediaItems()
+        recentes.firstOrNull { it.uri == uri.toString() }?.let { esquecerRecente(it) }
+        prefs.edit().remove("ultima").apply()
+        dir.deleteRecursively()
+        java.io.File(ctx.cacheDir, "multipista").listFiles()?.forEach { it.delete() }
+        faixas = null; mixer.faixas = 0
+        uri = null; nome = ""; onda = null; duracao = 0; posicao = 0
+        limparAB()
+    }
+
+    // ---------- Exportar o áudio editado ----------
+
+    /** Progresso (0..1) enquanto exporta, ou null. */
+    var exportando by mutableStateOf<Float?>(null); private set
+    var exportado by mutableStateOf<Exportador.Resultado?>(null)
+    private var jobExportar: Job? = null
+
+    /** Nome sugerido: "Música (sem Guitarra, 90%, tom +2)". */
+    fun nomeExportacao(soTrecho: Boolean, comAjustes: Boolean): String {
+        val partes = ArrayList<String>()
+        faixas?.let { lista ->
+            val solo = lista.filter { it.solo }
+            val mudos = lista.filter { it.mudo }
+            when {
+                solo.isNotEmpty() -> partes += "só " + solo.joinToString(" e ") { it.nome }
+                mudos.isNotEmpty() -> partes += "sem " + mudos.joinToString(" e ") { it.nome }
+            }
+        }
+        if (comAjustes) {
+            if (velocidade != 1f) partes += "${Math.round(velocidade * 100)}%"
+            if (semitons != 0 || cents != 0) partes += "tom " + "%+d".format(semitons) + (if (cents != 0) " %+dc".format(cents) else "")
+        }
+        if (soTrecho && pontoB != null) partes += "trecho"
+        return if (partes.isEmpty()) nome else "$nome (${partes.joinToString(", ")})"
+    }
+
+    fun exportar(nomeArquivo: String, soTrecho: Boolean, comAjustes: Boolean) {
+        val u = uri ?: return
+        val m = montagemAtual
+        val pedido = Exportador.Pedido(
+            nome = nomeArquivo,
+            musica = if (m == null) u else null,
+            multipista = m?.arquivo,
+            ganhos = if (m != null) mixer.ganhos.copyOf() else null,
+            inicioMs = if (soTrecho) pontoA else null,
+            fimMs = if (soTrecho) pontoB else null,
+            velocidade = if (comAjustes) velocidade else 1f,
+            tom = if (comAjustes) 2.0.pow(semitons / 12.0 + cents / 1200.0).toFloat() else 1f,
+            deslocQuadros = if (m != null && faixasDoApp != null) 2048L else 0L,
+        )
+        exportando = 0f
+        jobExportar = escopo.launch {
+            try {
+                var ultimo = -1
+                val r = Exportador.exportar(ctx, pedido) { f ->
+                    val pct = (f * 100).toInt()
+                    if (pct != ultimo) { ultimo = pct; escopo.launch { if (exportando != null) exportando = f } }
+                }
+                exportando = null
+                exportado = r
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                exportando = null
+                throw e
+            } catch (e: Exception) {
+                exportando = null
+                avisoMultipista = (e as? MontadorMultipista.Problema)?.message
+                    ?: "Não deu para exportar (${e.javaClass.simpleName}: ${e.message?.take(120)})."
+            }
+        }
+    }
+
+    fun cancelarExportacao() { jobExportar?.cancel(); exportando = null }
+
+    /** Exporta cada instrumento separado em WAV (para DAW). */
+    fun exportarFaixas(soTrecho: Boolean, comAjustes: Boolean) {
+        val m = montagemAtual ?: return
+        val pasta = nome + " (faixas" + (if (comAjustes && (velocidade != 1f || semitons != 0 || cents != 0))
+            ", ${Math.round(velocidade * 100)}%" + (if (semitons != 0 || cents != 0) ", tom %+d".format(semitons) else "") else "") +
+            (if (soTrecho && pontoB != null) ", trecho" else "") + ")"
+        // Faixas separadas pelo app: tira o atraso do AAC (2048 amostras) e ficam alinhadas com a música original
+        val desloc = if (faixasDoApp != null) 2048L else 0L
+        exportando = 0f
+        jobExportar = escopo.launch {
+            try {
+                var ultimo = -1
+                val r = Exportador.exportarFaixas(
+                    ctx, m.arquivo, m.nomes, pasta,
+                    if (soTrecho) pontoA else null, if (soTrecho) pontoB else null,
+                    if (comAjustes) velocidade else 1f,
+                    if (comAjustes) 2.0.pow(semitons / 12.0 + cents / 1200.0).toFloat() else 1f,
+                    desloc,
+                ) { f ->
+                    val pct = (f * 100).toInt()
+                    if (pct != ultimo) { ultimo = pct; escopo.launch { if (exportando != null) exportando = f } }
+                }
+                exportando = null
+                exportado = r
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                exportando = null
+                throw e
+            } catch (e: Exception) {
+                exportando = null
+                avisoMultipista = (e as? MontadorMultipista.Problema)?.message
+                    ?: "Não deu para exportar (${e.javaClass.simpleName}: ${e.message?.take(120)})."
+            }
+        }
+    }
+
     // ---------- Volume de cada faixa ----------
 
     fun mudarVolume(f: FaixaMix, v: Float) { f.volume = v.coerceIn(0f, 1.5f); aplicarMix() }
@@ -218,8 +335,11 @@ class ControlePlayer(private val ctx: Context, private val prefs: SharedPreferen
     }
 
     /** [chave] identifica a música (trechos salvos, recentes); [midia] é o que o player toca. */
+    private var montagemAtual: MontagemMultipista? = null
+
     private fun carregar(chave: Uri, midia: Uri, nomeMusica: String, tocar: Boolean, montagem: MontagemMultipista?) {
         val novo = chave
+        montagemAtual = montagem
         erro = null
         cancelarEspera()
         uri = novo

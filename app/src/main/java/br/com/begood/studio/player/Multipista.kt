@@ -126,7 +126,17 @@ object MontadorMultipista {
         }
     }
 
+    /** Pasta comum do celular (faixas separadas pelo próprio app) ou pasta escolhida pelo seletor do Android. */
+    fun ehPastaDeArquivos(u: Uri) = u.scheme == "file" && u.path?.let { File(it).isDirectory } == true
+
     private fun listar(ctx: Context, pasta: Uri): List<Arquivo> {
+        if (pasta.scheme == "file") {
+            val dir = File(pasta.path!!)
+            return (dir.listFiles() ?: emptyArray())
+                .filter { it.isFile && it.extension.lowercase() in extensoes }
+                .map { f -> nomeDaFaixa(f.name).let { (rotulo, ordem) -> Arquivo(rotulo, Uri.fromFile(f), f.length(), ordem) } }
+                .sortedWith(compareBy({ it.ordem }, { semAcento(it.nome) }))
+        }
         val doc = DocumentsContract.getTreeDocumentId(pasta)
         val filhos = DocumentsContract.buildChildDocumentsUriUsingTree(pasta, doc)
         val lista = ArrayList<Arquivo>()
@@ -149,6 +159,7 @@ object MontadorMultipista {
     }
 
     fun nomeDaPasta(ctx: Context, pasta: Uri): String = runCatching {
+        if (pasta.scheme == "file") return@runCatching File(pasta.path!!).name
         val doc = DocumentsContract.buildDocumentUriUsingTree(pasta, DocumentsContract.getTreeDocumentId(pasta))
         ctx.contentResolver.query(doc, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) c.getString(0) else null
@@ -204,8 +215,12 @@ object MontadorMultipista {
         }
     }
 
-    /** Decodifica uma faixa para PCM 16 bits estéreo. Devolve a taxa de amostragem. */
-    private suspend fun decodificar(ctx: Context, a: Arquivo, destino: File, progresso: (Float) -> Unit): Int {
+    private suspend fun decodificar(ctx: Context, a: Arquivo, destino: File, progresso: (Float) -> Unit): Int =
+        decodificarPcm16(ctx, a.uri, a.nome, destino, progresso)
+
+    /** Decodifica um arquivo de áudio para PCM 16 bits estéreo (L, R intercalados). Devolve a taxa de amostragem. */
+    suspend fun decodificarPcm16(ctx: Context, uri: Uri, rotulo: String, destino: File, progresso: (Float) -> Unit): Int {
+        val a = object { val uri = uri; val nome = rotulo }
         val extrator = MediaExtractor()
         var codec: MediaCodec? = null
         try {

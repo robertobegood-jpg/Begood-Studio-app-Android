@@ -34,9 +34,12 @@ android {
         applicationId = "br.com.begood.studio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.2.0"
+        versionCode = 6
+        versionName = "1.3.0"
     }
+
+    // O modelo do separador vai sem compactar (é lido direto do APK)
+    androidResources { noCompress += listOf("onnx", "pesos16") }
 
     signingConfigs {
         val arquivo = (segredo("KEYSTORE_FILE") ?: "assinatura/studio.jks").let { file(it) }
@@ -60,9 +63,12 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Sem a chave oficial, sai com a chave de debug (dá para instalar, mas não atualiza o APK oficial).
             signingConfig = signingConfigs.findByName("oficial") ?: signingConfigs.getByName("debug")
+            // Separador de instrumentos (ONNX Runtime): celulares de 64 bits
+            ndk { abiFilters += listOf("arm64-v8a") }
         }
         debug {
             signingConfigs.findByName("oficial")?.let { signingConfig = it }
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") } // x86_64: emulador
         }
     }
 
@@ -97,6 +103,9 @@ dependencies {
     // Player: mudar tempo e tom sem mexer um no outro, repeat A/B
     val media3 = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
+
+    // Separar instrumentos no celular (HTDemucs em ONNX)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.0")
 
     testImplementation("junit:junit:4.13.2")
 

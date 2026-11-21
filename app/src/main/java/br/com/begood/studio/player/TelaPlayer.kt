@@ -53,6 +53,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +71,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import br.com.begood.studio.separador.EstadoSeparacao
+import br.com.begood.studio.separador.MotorSeparador
+import br.com.begood.studio.separador.ServicoSeparacao
 import br.com.begood.studio.ui.Ambar
 import br.com.begood.studio.ui.AmbarClaro
 import br.com.begood.studio.ui.AppViewModel
@@ -165,10 +171,11 @@ fun TelaPlayer(vm: AppViewModel) {
             else if (p.repetir && p.pontoB != null) Text("Repetindo o trecho A–B", color = Cinza, style = MaterialTheme.typography.bodyMedium)
         }
 
-        p.faixas?.let { SecaoInstrumentos(p, it) }
+        p.faixas?.let { SecaoInstrumentos(p, it) } ?: SecaoSeparar(vm)
         SecaoAB(vm)
         SecaoVelocidade(vm)
         SecaoTom(vm)
+        SecaoExportar(vm)
     }
 }
 
@@ -350,7 +357,199 @@ private fun SecaoInstrumentos(p: ControlePlayer, faixas: List<FaixaMix>) {
                 enabled = faixas.any { it.mudo || it.solo || it.volume != 1f },
             ) { Text("Voltar todos ao normal") }
         }
+        p.faixasDoApp?.let { dir ->
+            var confirmar by remember { mutableStateOf(false) }
+            val mb = remember(dir) { (dir.listFiles()?.sumOf { it.length() } ?: 0L) / 1_000_000 }
+            TextButton(onClick = { confirmar = true }) { Text("Apagar estas faixas separadas ($mb MB)", color = Cinza) }
+            if (confirmar) AlertDialog(
+                onDismissRequest = { confirmar = false },
+                title = { Text("Apagar faixas separadas?") },
+                text = { Text("Libera $mb MB. A música original não é apagada; dá para separar de novo depois.") },
+                confirmButton = { TextButton(onClick = { confirmar = false; p.apagarFaixasDoApp() }) { Text("Apagar") } },
+                dismissButton = { TextButton(onClick = { confirmar = false }) { Text("Cancelar") } },
+            )
+        }
     }
+}
+
+/** Exportar o áudio do jeito que está (instrumentos, velocidade, tom, trecho) para mandar para a banda. */
+@Composable
+private fun SecaoExportar(vm: AppViewModel) {
+    val p = vm.player
+    val ctx = LocalContext.current
+    var abrir by remember { mutableStateOf(false) }
+    Secao("Exportar áudio") {
+        Text(
+            "Salva um arquivo do jeito que você deixou (sem um instrumento, mais lento, em outro tom ou só o trecho A–B) " +
+                "para mandar para a banda ou tocar no show." +
+                (if (p.faixas != null) " Também dá para salvar cada instrumento separado em WAV, para usar numa DAW." else ""),
+            style = MaterialTheme.typography.bodySmall, color = Cinza,
+        )
+        FilledTonalButton(onClick = { abrir = true }, modifier = Modifier.fillMaxWidth(), enabled = p.exportando == null) {
+            Text("Exportar áudio…")
+        }
+    }
+    if (abrir) {
+        val temAjuste = p.velocidade != 1f || p.semitons != 0 || p.cents != 0
+        var soTrecho by remember { mutableStateOf(false) }
+        var comAjustes by remember { mutableStateOf(true) }
+        var faixasDaw by remember { mutableStateOf(false) }
+        var nome by remember(soTrecho, comAjustes) { mutableStateOf(p.nomeExportacao(soTrecho, comAjustes)) }
+        AlertDialog(
+            onDismissRequest = { abrir = false },
+            title = { Text("Exportar áudio") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (p.faixas != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Cada instrumento num arquivo")
+                                Text("WAV sem perda, para DAW (Reaper, Studio One, Audacity…)", style = MaterialTheme.typography.bodySmall, color = Cinza)
+                            }
+                            Switch(checked = faixasDaw, onCheckedChange = { faixasDaw = it })
+                        }
+                    }
+                    if (!faixasDaw) OutlinedTextField(value = nome, onValueChange = { nome = it }, label = { Text("Nome do arquivo") })
+                    if (temAjuste) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Com a velocidade e o tom de agora", modifier = Modifier.weight(1f))
+                        Switch(checked = comAjustes, onCheckedChange = { comAjustes = it })
+                    }
+                    if (p.pontoB != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Só o trecho A–B", modifier = Modifier.weight(1f))
+                        Switch(checked = soTrecho, onCheckedChange = { soTrecho = it })
+                    }
+                    Text(
+                        if (faixasDaw) "Ficam numa pasta em Música › Begood Studio, numerados e alinhados: é só arrastar todos para o projeto."
+                        else "Fica na pasta Música › Begood Studio (arquivo .m4a, abre em qualquer celular e computador).",
+                        style = MaterialTheme.typography.bodySmall, color = Cinza,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    abrir = false
+                    if (faixasDaw) p.exportarFaixas(soTrecho, comAjustes && temAjuste) else p.exportar(nome, soTrecho, comAjustes && temAjuste)
+                }) { Text("Exportar") }
+            },
+            dismissButton = { TextButton(onClick = { abrir = false }) { Text("Cancelar") } },
+        )
+    }
+    p.exportando?.let { f ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Exportando…") },
+            text = { LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { p.cancelarExportacao() }) { Text("Cancelar") } },
+        )
+    }
+    p.exportado?.let { r ->
+        AlertDialog(
+            onDismissRequest = { p.exportado = null },
+            title = { Text("Áudio exportado") },
+            text = { Text((if (r.uris.size > 1) "${r.uris.size} arquivos salvos em " else "Salvo em ") + r.ondeFicou) },
+            confirmButton = {
+                TextButton(onClick = {
+                    p.exportado = null
+                    val envio = if (r.uris.size == 1) android.content.Intent(android.content.Intent.ACTION_SEND)
+                        .setType(r.tipo).putExtra(android.content.Intent.EXTRA_STREAM, r.uris[0])
+                    else android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE)
+                        .setType(r.tipo).putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, ArrayList(r.uris))
+                    envio.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    ctx.startActivity(android.content.Intent.createChooser(envio, "Enviar o áudio"))
+                }) { Text("Compartilhar") }
+            },
+            dismissButton = { TextButton(onClick = { p.exportado = null }) { Text("OK") } },
+        )
+    }
+}
+
+/** Separar os instrumentos da música aberta, tudo no celular (HTDemucs). */
+@Composable
+private fun SecaoSeparar(vm: AppViewModel) {
+    val p = vm.player
+    val ctx = LocalContext.current
+    val est by ServicoSeparacao.estado.collectAsStateWithLifecycle()
+    var perguntar by remember { mutableStateOf(false) }
+    val pedirAviso = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+        p.uri?.let { ServicoSeparacao.iniciar(ctx, it, p.nome) }
+    }
+    val separada = remember(p.nome, est) { MotorSeparador.jaSeparada(ctx, p.nome) }
+    // Terminou a separação desta música: abre as faixas
+    LaunchedEffect(est) {
+        val e = est
+        if (e is EstadoSeparacao.Pronto && e.nome == p.nome) {
+            ServicoSeparacao.esquecerResultado()
+            p.abrirMultipista(Uri.fromFile(e.pasta), tocar = false)
+        }
+    }
+    Secao("Instrumentos") {
+        when (val e = est) {
+            is EstadoSeparacao.Trabalhando -> {
+                if (e.nome != p.nome) Text("Separando: ${e.nome}", color = AmbarClaro, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(e.texto, style = MaterialTheme.typography.bodyMedium)
+                LinearProgressIndicator(progress = { e.fracao }, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${(e.fracao * 100).roundToInt()}%", color = AmbarClaro, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { ServicoSeparacao.cancelar(ctx) }) { Text("Cancelar") }
+                }
+                Text(
+                    "Pode usar o celular normalmente ou apagar a tela: a separação continua e avisa quando terminar.",
+                    style = MaterialTheme.typography.bodySmall, color = Cinza,
+                )
+            }
+            is EstadoSeparacao.Erro -> {
+                Text(e.mensagem, color = Color(0xFFE5643A), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { ServicoSeparacao.esquecerResultado() }) { Text("OK") }
+            }
+            is EstadoSeparacao.Pronto -> {
+                Text("Pronto: ${e.nome}", color = AmbarClaro)
+                Button(onClick = {
+                    ServicoSeparacao.esquecerResultado()
+                    p.abrirMultipista(Uri.fromFile(e.pasta))
+                }, modifier = Modifier.fillMaxWidth()) { Text("Abrir os instrumentos") }
+            }
+            EstadoSeparacao.Parado -> {
+                if (separada != null) {
+                    Button(onClick = { p.abrirMultipista(Uri.fromFile(separada)) }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.Tune, null); Text("  Abrir os instrumentos separados")
+                    }
+                } else {
+                    Text(
+                        "Separe voz, guitarra, baixo, bateria, piano e o resto desta música para tirar um instrumento " +
+                            "e tocar por cima, ou ouvir só ele.",
+                        style = MaterialTheme.typography.bodySmall, color = Cinza,
+                    )
+                    FilledTonalButton(onClick = { perguntar = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.Tune, null); Text("  Separar instrumentos")
+                    }
+                }
+            }
+        }
+    }
+    if (perguntar) AlertDialog(
+        onDismissRequest = { perguntar = false },
+        title = { Text("Separar instrumentos") },
+        text = {
+            Text(
+                "Tudo é feito no próprio celular, sem internet, com inteligência artificial (Demucs).\n\n" +
+                    "• Demora: alguns minutos por música (depende do celular). Gasta bastante bateria: se puder, deixe carregando.\n" +
+                    "• Pode usar outros apps enquanto isso.\n" +
+                    "• As faixas ficam guardadas (uns 45 MB por música) e abrem na hora depois."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                perguntar = false
+                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                    androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) pedirAviso.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                else p.uri?.let { ServicoSeparacao.iniciar(ctx, it, p.nome) }
+            }) { Text("Separar") }
+        },
+        dismissButton = { TextButton(onClick = { perguntar = false }) { Text("Agora não") } },
+    )
 }
 
 @Composable

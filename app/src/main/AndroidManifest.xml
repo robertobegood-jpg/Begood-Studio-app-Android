@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Sem internet: nada sai do celular (a biblioteca do separador pede, mas não precisa) -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
 
     <!-- Afinador: ouvir o instrumento pelo microfone -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -8,6 +13,11 @@
     <!-- Player: biblioteca com as músicas do celular -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Separar instrumentos: continua trabalhando em segundo plano, com aviso na notificação -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
@@ -15,7 +25,8 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Tema">
+        android:theme="@style/Tema"
+        android:largeHeap="true">
 
         <activity
             android:name=".ui.MainActivity"
@@ -33,5 +44,24 @@
                 <data android:scheme="content" android:mimeType="audio/*" />
             </intent-filter>
         </activity>
+        <!-- Sem telemetria da biblioteca do separador (ela tentaria usar a internet) -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:node="remove" />
+
+        <!-- Compartilhar o áudio exportado (Android 9 e anteriores) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.arquivos"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/arquivos" />
+        </provider>
+
+        <service
+            android:name=".separador.ServicoSeparacao"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
